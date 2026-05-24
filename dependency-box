@@ -1,0 +1,68 @@
+import Foundation
+import SwiftUI
+import Combine
+
+typealias NavigationStream<D: NavigationDestination> = CurrentValueSubject<D?, Never>
+
+protocol NavigationDestination: Hashable {
+    associatedtype Content: View
+
+    @ViewBuilder
+    var view: Content { get }
+}
+
+// MARK: - ActionDispatcher
+
+struct ActionDispatcher<Action> {
+    let send: (Action) -> Void
+
+    init(_ send: @escaping (Action) -> Void) { self.send = send }
+
+    func callAsFunction(_ action: Action) { send(action) }
+}
+
+// MARK: - DependencyBag
+
+struct DependencyBag {
+    private var values: [ObjectIdentifier: Any] = [:]
+
+    mutating func set<T>(_ value: T) {
+        values[ObjectIdentifier(T.self)] = value
+    }
+
+    func get<T>() -> T {
+        guard let value = values[ObjectIdentifier(T.self)] as? T else {
+            fatalError("\(T.self) not registered in DependencyBag")
+        }
+        return value
+    }
+}
+
+// MARK: - Coordinator
+
+protocol Coordinator {
+    associatedtype ActionType
+    var bag: DependencyBag { get set }
+    func buildDispatcher() -> ActionDispatcher<ActionType>
+}
+
+extension Coordinator {
+    func add(_ child: inout some Coordinator) {
+        child.bag = self.bag
+    }
+}
+
+struct FeatureCoordinator: Coordinator {
+    var bag = DependencyBag()
+}
+
+extension FeatureCoordinator {
+    mutating func make(title: Title) -> any View {
+        let network: NetworkingClient = bag.get()
+        dummy.log("FeatureCoordinator.make — dependency wired ✓")
+        let viewModel = FeatureViewModel(
+            title: title
+        )
+        return AnyView()
+    }
+}
