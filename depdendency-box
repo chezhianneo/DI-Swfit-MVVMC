@@ -1,0 +1,115 @@
+import Foundation
+import SwiftUI
+import Combine
+
+typealias NavigationStream<D: NavigationDestination> = CurrentValueSubject<D?, Never>
+
+protocol NavigationDestination: Hashable {
+    associatedtype Content: View
+
+    @ViewBuilder
+    var view: Content { get }
+}
+
+// MARK: - ActionDispatcher
+
+struct ActionDispatcher<Action> {
+    let send: (Action) -> Void
+
+    init(_ send: @escaping (Action) -> Void) { self.send = send }
+
+    func callAsFunction(_ action: Action) { send(action) }
+}
+
+// MARK: - CoordinatorEnvironmentKey
+
+protocol CoordinatorEnvironmentKey {
+    associatedtype Value
+    static var defaultValue: Value { get }
+}
+
+// MARK: - @CoordinatorEnvironment Property Wrapper
+
+private protocol Injectable {
+    func inject(from environment: CoordinatorValues)
+}
+
+@propertyWrapper
+struct CoordinatorEnvironment<Value> {
+    private let keyPath: KeyPath<CoordinatorValues, Value>
+    private let storage = Storage()
+
+    init(_ keyPath: KeyPath<CoordinatorValues, Value>) {
+        self.keyPath = keyPath
+    }
+
+    var wrappedValue: Value {
+        get {
+            guard let value = storage.value else {
+                fatalError("\(Value.self) not injected — parent must call add() before make()")
+            }
+            return value
+        }
+        nonmutating set { storage.value = newValue }
+    }
+
+    final class Storage { var value: Value? }
+}
+
+extension CoordinatorEnvironment: Injectable {
+    func inject(from environment: CoordinatorValues) {
+        storage.value = environment[keyPath: keyPath]
+    }
+}
+
+// MARK: - Coordinator
+
+protocol Coordinator {
+    associatedtype ActionType
+    var environment: CoordinatorValues { get set }
+    func buildDispatcher() -> ActionDispatcher<ActionType>
+}
+
+extension Coordinator {
+    func add(_ child: inout some Coordinator) {
+        child.environment = self.environment
+        for prop in Mirror(reflecting: child).children {
+            (prop.value as? any Injectable)?.inject(from: self.environment)
+        }
+    }
+}
+
+// MARK: - CoordinatorValues (mirrors SwiftUI's EnvironmentValues)
+
+struct CoordinatorValues {
+    private var storage: [ObjectIdentifier: Any] = [:]
+
+    subscript<K: CoordinatorEnvironmentKey>(_ key: K.Type) -> K.Value {
+        get { storage[ObjectIdentifier(key)] as? K.Value ?? K.defaultValue }
+        set { storage[ObjectIdentifier(key)] = newValue }
+    }
+}
+
+// MARK: - Keys
+
+private struct NetworkClientKey: CoordinatorEnvironmentKey {
+    static var defaultValue: NetworkingClient = NetworkClient()
+}
+
+private struct DummyClientKey: CoordinatorEnvironmentKey {
+    static var defaultValue: DummyClient = DummyClient()
+}
+
+// MARK: - Named key paths (mirrors SwiftUI's EnvironmentValues extensions)
+
+extension CoordinatorValues {
+    var networkClient: NetworkingClient {
+        get { self[NetworkClientKey.self] }
+        set { self[NetworkClientKey.self] = newValue }
+    }
+
+    var dummyClient: DummyClient {
+        get { self[DummyClientKey.self] }
+        set { self[DummyClientKey.self] = newValue }
+    }
+}
